@@ -1,0 +1,50 @@
+# Hardened systemd unit for pi5_exporter.
+#
+# Setup (once):
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin --groups video pi5_exporter
+#   sudo install -m 0755 pi5_exporter /usr/local/bin/pi5_exporter
+#   sudo install -m 0644 systemd/pi5_exporter.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now pi5_exporter
+#
+# The `video` group is the one non-obvious requirement: /dev/vcio is crw-rw---- root:video,
+# and that device is how the exporter reaches the VideoCore firmware (PMIC, throttle, clocks...).
+
+[Unit]
+Description=Raspberry Pi 5 firmware metrics exporter (pi5_exporter)
+Documentation=https://github.com/bcrisp4/pi5_exporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi5_exporter
+Group=pi5_exporter
+SupplementaryGroups=video
+ExecStart=/usr/local/bin/pi5_exporter --web.listen-address=:2712
+Restart=on-failure
+RestartSec=5s
+
+# --- Hardening: grant only what the exporter needs ---
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6
+# Device access: vcio (firmware mailbox) is mandatory; rtc is for the optional rtc collector.
+PrivateDevices=false
+DeviceAllow=/dev/vcio rw
+DeviceAllow=char-rtc r
+MemoryMax=64M
+TasksMax=16
+
+[Install]
+WantedBy=multi-user.target
