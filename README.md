@@ -100,6 +100,87 @@ can open `/dev/vcio`) and applies systemd hardening (`NoNewPrivileges`,
 `ProtectSystem=strict`, `MemoryDenyWriteExecute`, an empty capability set,
 `DeviceAllow=/dev/vcio rw`, `DeviceAllow=char-rtc r`, `MemoryMax=64M`, etc.).
 
+### Container image (GHCR)
+
+Released versions are published as a minimal (~15 MB) distroless image for
+**`linux/arm64`** (Raspberry Pi 5) at `ghcr.io/bcrisp4/pi5_exporter`:
+
+```sh
+podman pull ghcr.io/bcrisp4/pi5_exporter:latest
+# ...or a specific version:
+podman pull ghcr.io/bcrisp4/pi5_exporter:0.1.0
+```
+
+The container needs two things to reach the firmware: the **`/dev/vcio`** device
+**and** the host **`video`** group. The exporter runs as a non-root user (uid
+65532) inside the image, so it must be granted that group to open the device —
+the same `video`-group requirement as the native binary, just expressed as
+container run flags.
+
+**Run with podman** (rootless — the Raspberry Pi OS default). Run podman as a
+user who is in the `video` group; `--group-add keep-groups` then carries that
+group into the container:
+
+```sh
+podman run -d --name pi5_exporter --restart=unless-stopped \
+  -p 2712:2712 \
+  --device /dev/vcio \
+  --group-add keep-groups \
+  ghcr.io/bcrisp4/pi5_exporter:latest
+```
+
+**Run with docker** (or rootful podman). `keep-groups` is podman-rootless-only,
+so pass the host's numeric `video` GID explicitly:
+
+```sh
+docker run -d --name pi5_exporter --restart=unless-stopped \
+  -p 2712:2712 \
+  --device /dev/vcio \
+  --group-add "$(getent group video | cut -d: -f3)" \
+  ghcr.io/bcrisp4/pi5_exporter:latest
+```
+
+Exporter flags (see §3) go **after** the image name, e.g.
+`… ghcr.io/bcrisp4/pi5_exporter:latest --collection.interval=30s --no-collector.rtc`.
+
+Verify the container can reach the firmware:
+
+```sh
+curl -s localhost:2712/metrics | grep pi5_scrape_collector_success
+# all values 1 = OK. If the firmware collectors are 0 or absent, the container
+# could not open /dev/vcio — check `podman logs pi5_exporter` for a warning
+# about the 'video' group (EACCES) or a missing device (ENOENT).
+```
+
+**Run as a managed service (podman Quadlet).** On podman 4.4+, the rootless setup
+mirrors the `podman run` above. Drop a Quadlet unit at
+`~/.config/containers/systemd/pi5_exporter.container`:
+
+```ini
+[Unit]
+Description=pi5_exporter (container)
+
+[Container]
+Image=ghcr.io/bcrisp4/pi5_exporter:latest
+PublishPort=2712:2712
+AddDevice=/dev/vcio
+GroupAdd=keep-groups
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
+```
+
+Then `systemctl --user daemon-reload && systemctl --user start pi5_exporter`
+(run `loginctl enable-linger "$USER"` so it keeps running after you log out).
+Quadlet generates and manages the service — no `podman generate systemd` needed.
+For a **rootful** system unit under `/etc/containers/systemd/`, replace
+`GroupAdd=keep-groups` with the numeric `video` GID (find it with
+`getent group video`), since keep-groups would otherwise keep root's groups, not
+`video`.
+
 ---
 
 ## 3. Run
