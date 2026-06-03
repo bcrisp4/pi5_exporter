@@ -2,7 +2,12 @@ name: release
 
 on:
   push:
-    tags: ["v*"]
+    # Semver release tags only. GitHub tag filters use a glob subset where
+    # [0-9] is a digit class, + means "one or more", and . is a literal dot —
+    # so these reject stray tags like "vfoo", "v1", or "v1.2.3.4".
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+" # releases:    v1.2.3
+      - "v[0-9]+.[0-9]+.[0-9]+-*" # prereleases: v1.2.3-rc1
 
 permissions: {}
 
