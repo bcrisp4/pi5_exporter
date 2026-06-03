@@ -1,0 +1,21 @@
+# Keep the build context to the Go module only.
+.git
+.github
+.gitignore
+
+# Build artifacts / test output
+/pi5_exporter
+/dist
+*.test
+*.out
+coverage.out
+
+# Docs, packaging, and config not needed to compile
+*.md
+docs
+systemd
+LICENSE
+Makefile
+.golangci.yml
+.dockerignore
+Dockerfile

@@ -28,13 +28,23 @@ binaries. Research-backed design (June 2026):
 - Reuse the existing `Makefile` ldflags pattern; validate locally with
   `goreleaser check` / `goreleaser release --snapshot --clean`.
 
-### Container image (wanted soon)
-Publish a multi-arch image to `ghcr.io/bcrisp4/pi5_exporter`
-(`linux/arm64`, optionally `linux/arm/v7`). For a single static Go binary,
-**ko** is the lightest path — no Dockerfile, distroless base, automatic SBOM,
-and a GoReleaser `kos:` pipe — preferred over Docker buildx unless a Dockerfile
-is specifically required. Attest the image digest as well. The primary
-deployment remains the systemd unit; the image is an added convenience.
+### Container image
+A multi-stage **`Dockerfile`** (distroless `static-debian12:nonroot`, runs
+non-root, multi-arch-ready via `TARGETARCH`, ldflags wired to
+`prometheus/common/version`) and a `.dockerignore` now exist; build/run notes
+(including the `--device /dev/vcio` + `--group-add` runtime requirement) are in
+the Dockerfile header. The primary deployment remains the systemd unit; the
+image is an added convenience.
+
+Remaining (the publish pipeline, deferred):
+- Multi-arch build + push to `ghcr.io/bcrisp4/pi5_exporter` (`linux/arm64`,
+  optionally `linux/arm/v7`) — via `podman build --platform` / buildx, or wired
+  into the release workflow above.
+- Image provenance: attest the pushed image digest
+  (`actions/attest-build-provenance`).
+- `packages: write` permission for GHCR.
+- (Alternative considered: **ko** for a Dockerfile-free distroless build — kept
+  an explicit Dockerfile instead, per request.)
 
 ## Under consideration (not yet decided)
 Optional supply-chain hardening beyond the implemented baseline. Worth adopting
