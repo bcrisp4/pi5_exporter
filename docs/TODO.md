@@ -1,65 +1,41 @@
-# pi5_exporter — TODO / future work
+# pi5_exporter — status & future work
 
-Follow-ups deliberately deferred from the initial CI/CD hardening. The
-implemented baseline — modern CI (`actions/*` v6, Node 24), golangci-lint v2,
-govulncheck, SHA-pinned actions, Dependabot, least-privilege permissions —
-lives under `.github/`.
+## Implemented
 
-## Planned
+- **CI** (`.github/workflows/ci.yml`): modern actions (v6, Node 24), `test` +
+  `lint` jobs, `-race`/`-shuffle`/coverage + arm64 cross-compile, golangci-lint v2
+  (`.golangci.yml`) and govulncheck. SHA-pinned actions + Dependabot
+  (`github-actions` + `gomod`), least-privilege permissions, `SECURITY.md`.
+- **CodeQL** code scanning for Go (default setup, enabled in repo settings).
+- **Container image** (`Dockerfile` + `.dockerignore`): multi-stage, distroless
+  `static-debian12:nonroot`, ~15 MB, version ldflags wired in. Verified on a Pi 5.
+- **Release pipeline** (`.github/workflows/release.yml` + `.goreleaser.yaml`):
+  on a `v*` semver tag it builds the binaries (linux/arm64 + armv7), archives
+  (with `LICENSE`/`README`/`systemd`), `checksums.txt`, an SBOM, and a GitHub
+  Release via GoReleaser; builds and pushes the `linux/arm64` image to
+  `ghcr.io/bcrisp4/pi5_exporter`; and signs build-provenance attestations for
+  both (verifiable with `gh attestation verify`).
 
-### Release pipeline — GoReleaser + build provenance
-A tag-triggered (`v*`) release workflow producing signed, attested, multi-arch
-binaries. Research-backed design (June 2026):
+### Cutting a release
+Push a semver tag, e.g.:
+```sh
+git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
+```
+After the first image push, make the GHCR package **public** in its settings if
+you want unauthenticated `podman pull` (it defaults to private).
 
-- **GoReleaser v2** via `goreleaser/goreleaser-action@v7` with `version: "~> v2"`.
-- Build `linux/arm64` (Pi 5 — primary) and optionally `linux/arm` `goarm=7`
-  (32-bit Pi OS / Zero 2 W / Pi 3). Pure-Go `CGO_ENABLED=0`, so cross-compiles
-  are free.
-- Wire the existing `github.com/prometheus/common/version` ldflags
-  (`Version={{.Version}}`, `Revision={{.FullCommit}}`, `Branch`, `BuildDate`,
-  `BuildUser=goreleaser`) — this feeds `pi5_exporter_build_info`. Use
-  `-trimpath` + `mod_timestamp: "{{ .CommitTimestamp }}"` for reproducible builds.
-- `checksums.txt` (sha256) + SBOM (`sboms:` via Syft).
-- **`actions/attest-build-provenance@v4`** over `dist/checksums.txt` → free,
-  Sigstore-signed, SLSA-build-L2-ish provenance, verifiable with
-  `gh attestation verify <artifact> --repo bcrisp4/pi5_exporter`.
-- Release-job permissions: `contents: write`, `id-token: write`, `attestations: write`.
-- Bundle `LICENSE`, `README.md`, and `systemd/` into the release archive.
-- Reuse the existing `Makefile` ldflags pattern; validate locally with
-  `goreleaser check` / `goreleaser release --snapshot --clean`.
+## Possible future work
 
-### Container image
-A multi-stage **`Dockerfile`** (distroless `static-debian12:nonroot`, runs
-non-root, multi-arch-ready via `TARGETARCH`, ldflags wired to
-`prometheus/common/version`) and a `.dockerignore` now exist; build/run notes
-(including the `--device /dev/vcio` + `--group-add` runtime requirement) are in
-the Dockerfile header. The primary deployment remains the systemd unit; the
-image is an added convenience.
-
-Remaining (the publish pipeline, deferred):
-- Multi-arch build + push to `ghcr.io/bcrisp4/pi5_exporter` (`linux/arm64`,
-  optionally `linux/arm/v7`) — via `podman build --platform` / buildx, or wired
-  into the release workflow above.
-- Image provenance: attest the pushed image digest
-  (`actions/attest-build-provenance`).
-- `packages: write` permission for GHCR.
-- (Alternative considered: **ko** for a Dockerfile-free distroless build — kept
-  an explicit Dockerfile instead, per request.)
-
-## Under consideration (not yet decided)
-Optional supply-chain hardening beyond the implemented baseline. Worth adopting
-if/when chasing an OpenSSF Scorecard badge or OSPS Baseline conformance:
-
-- **CodeQL** code scanning for Go — easiest via repo **Settings → Code security →
-  Code scanning → Default setup** (one click, self-updating; no workflow file).
-- **Branch protection** on `main` (required status checks: `test`, `lint`; block
-  force-push). Deferred because the current flow pushes directly to `main`;
-  enabling it moves work to a PR-based flow. Enable with:
+- **armv7 container image** — the image is currently `linux/arm64` only (binaries
+  already cover armv7). Adding `linux/arm/v7` needs `GOARM` handling from
+  `TARGETVARIANT` in the Dockerfile + a multi-platform `build-push-action`.
+- **Branch protection** on `main` (required checks: `test`, `lint`; block
+  force-push). Deferred because the current flow pushes directly to `main`.
   `gh api -X PUT repos/bcrisp4/pi5_exporter/branches/main/protection ...`
-- **OpenSSF Scorecard action** (`ossf/scorecard-action`) on a schedule + public badge.
-- **zizmor** GitHub Actions static analysis (SARIF to the Security tab).
-- **step-security/harden-runner** in `audit` mode (records a CI egress baseline).
+- **OpenSSF Scorecard** action + public badge; **zizmor** workflow static
+  analysis (SARIF to the Security tab); **step-security/harden-runner** in
+  `audit` mode. Adopt if chasing a Scorecard badge / OSPS Baseline conformance.
 - **cosign** keyless signing of release artifacts — largely redundant with the
-  build-provenance attestation above.
+  build-provenance attestations already produced.
 - **SLSA Build L3** via `slsa-framework/slsa-github-generator` — overkill for a
-  small single-binary exporter; only if a downstream consumer requires it.
+  small single-binary exporter unless a downstream consumer requires it.

@@ -1,0 +1,69 @@
+# GoReleaser configuration — https://goreleaser.com
+# Validate:  goreleaser check
+# Dry run:   goreleaser release --snapshot --clean --skip=sbom
+version: 2
+
+project_name: pi5_exporter
+
+builds:
+  - id: pi5_exporter
+    main: .
+    binary: pi5_exporter
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    # Reproducible builds: stamp the binary with the commit time, not build time.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos:
+      - linux
+    # arm64 = Raspberry Pi 5 (64-bit OS, the primary target);
+    # arm/v7 = 32-bit Raspberry Pi OS on a Pi 5.
+    goarch:
+      - arm64
+      - arm
+    goarm:
+      - "7"
+    ldflags:
+      - -s -w
+      - -X github.com/prometheus/common/version.Version={{ .Version }}
+      - -X github.com/prometheus/common/version.Revision={{ .FullCommit }}
+      - -X github.com/prometheus/common/version.Branch={{ .Branch }}
+      - -X github.com/prometheus/common/version.BuildUser=goreleaser
+      - -X github.com/prometheus/common/version.BuildDate={{ .Date }}
+
+archives:
+  - id: pi5_exporter
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
+    files:
+      - LICENSE
+      - README.md
+      - src: systemd/*
+        dst: systemd
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+# SBOM per archive (Syft). The release workflow installs syft; locally, run the
+# snapshot with --skip=sbom if syft is not present.
+sboms:
+  - artifacts: archive
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  github:
+    owner: bcrisp4
+    name: pi5_exporter
+  prerelease: auto # vX.Y.Z-rc1 etc. are marked as pre-releases automatically
