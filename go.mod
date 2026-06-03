@@ -2,6 +2,8 @@ module github.com/bcrisp4/pi5_exporter
 
 go 1.26.0
 
+toolchain go1.26.4
+
 require (
 	github.com/alecthomas/kingpin/v2 v2.4.0
 	github.com/prometheus/client_golang v1.23.2

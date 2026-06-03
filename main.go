@@ -113,7 +113,12 @@ func main() {
 		mux.Handle("/", landing)
 	}
 
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{
+		Handler: mux,
+		// Bound the header read so a slow client can't hold a connection open
+		// indefinitely (gosec G112 / Slowloris).
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 	go func() {
 		<-ctx.Done()
 		// Graceful drain: metrics are cached so serving is sub-millisecond, and
