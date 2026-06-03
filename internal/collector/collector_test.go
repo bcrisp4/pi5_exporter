@@ -189,7 +189,7 @@ func TestRTCCollector(t *testing.T) {
 # HELP pi5_rtc_battery_volts RTC backup-cell (battery/supercap) voltage.
 # TYPE pi5_rtc_battery_volts gauge
 pi5_rtc_battery_volts 3.282048
-# HELP pi5_rtc_charging_volts RTC backup-cell trickle-charge target voltage (0 = charging disabled / no cell fitted).
+# HELP pi5_rtc_charging_volts RTC backup-cell trickle-charge target voltage; 0 means trickle charging is not enabled (it does not indicate cell presence; see pi5_rtc_battery_volts).
 # TYPE pi5_rtc_charging_volts gauge
 pi5_rtc_charging_volts 0
 # HELP pi5_rtc_charging_volts_max Maximum configurable RTC trickle-charge voltage.

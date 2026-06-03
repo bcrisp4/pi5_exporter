@@ -23,7 +23,7 @@ talks to the VideoCore firmware over the BCM2712 mailbox property interface
 
 | Requirement | Notes |
 |---|---|
-| **Raspberry Pi 5 / BCM2712** | The Pi 500 and Compute Module 5 are also BCM2712 and work. The firmware collectors are gated on a BCM2712 board. |
+| **Raspberry Pi 5 / BCM2712** | Verified on the Pi 5 Model B. The Pi 500 and Compute Module 5 are also BCM2712 and *should* work but are **untested**. The firmware collectors are gated on a BCM2712 board. |
 | **`/dev/vcio`** | The firmware mailbox character device. Present on a current Raspberry Pi OS. |
 | The exporter user in the **`video` group** | See the callout below — this is the #1 gotcha. |
 | Go 1.26+ (build only) | Only needed to build; the resulting binary is static (`CGO_ENABLED=0`). |
@@ -32,6 +32,11 @@ A Raspberry Pi 4 (and earlier) is **not** supported for the firmware metrics:
 it lacks the `pmic_read_adc` firmware command and the BCM2712 PMIC. On a non-Pi-5
 board the firmware collectors auto-disable (see Troubleshooting); only the sysfs
 collectors (`rtc`, `watchdog`) can run.
+
+> **Tested configuration.** Developed and verified on a **Raspberry Pi 5 Model B
+> Rev 1.1** (revision code `e04171`, 16 GB), VideoCore firmware `66f33f7e`
+> (release, 2026-05-11), Raspberry Pi OS (kernel `6.12.75+rpt-rpi-2712`,
+> aarch64), built with Go 1.26.4. Other BCM2712 boards have not been tested.
 
 > **The exporter user MUST be in the `video` group.**
 >
@@ -151,14 +156,15 @@ non-Pi-5 board or when the device can't be opened. **sysfs** collectors (`rtc`,
 ## 4. How it works / caching
 
 ```
-                 every --collection.interval (default 15s)
-   ┌──────────┐      ┌───────────────┐      ┌───────────────┐
-   │  ticker  │────▶│   collectors   │────▶│ atomic snapshot │
-   └──────────┘      │ (read /dev/vcio │      │  []MetricFamily │
-                     │  + sysfs once)  │      └───────┬───────┘
-                     └───────────────┘              │ served as-is
-                                                     ▼
-                         GET /metrics  ◀────  cached snapshot (no HW read)
+  every --collection.interval (default 15s):
+
+    ┌────────┐     ┌────────────┐     ┌─────────────────┐
+    │ ticker │ ──▶ │ collectors │ ──▶ │ atomic snapshot │
+    └────────┘     └────────────┘     └─────────────────┘
+                   read /dev/vcio              │
+                     + sysfs once              ▼
+    GET /metrics  ◀──────────────────  cached snapshot
+                   (served as-is; no hardware read per scrape)
 ```
 
 - An **internal ticker** collects *all* enabled collectors every
@@ -181,102 +187,7 @@ non-Pi-5 board or when the device can't be opened. **sysfs** collectors (`rtc`,
 
 ---
 
-## 5. Prometheus scrape config
-
-```yaml
-# prometheus.yml
-scrape_configs:
-  - job_name: pi5_exporter
-    # MUST be >= the exporter's --collection.interval (default 15s),
-    # because /metrics serves cached values.
-    scrape_interval: 30s
-    static_configs:
-      - targets: ['raspberrypi:2712']
-```
-
----
-
-## 6. Example PromQL & alerting rules
-
-Ad-hoc queries:
-
-```promql
-# Live under-voltage happening right now
-pi5_throttle_state{flag="under_voltage"} == 1
-
-# Under-voltage occurred at some point since the last power-cycle (sticky)
-pi5_throttle_state_since_boot{flag="under_voltage"} == 1
-
-# Total measured board power (sum of measured rails; not 5V input power)
-pi5_pmic_measured_power_watts
-
-# The 5 hungriest rails right now
-topk(5, pi5_pmic_rail_watts)
-
-# SoC temperature
-pi5_soc_temperature_celsius
-```
-
-Alerting rules:
-
-```yaml
-groups:
-  - name: pi5_exporter
-    rules:
-      # Power supply is sagging RIGHT NOW — risk of corruption/instability.
-      - alert: Pi5UnderVoltageLive
-        expr: pi5_throttle_state{flag="under_voltage"} == 1
-        for: 1m
-        labels: { severity: critical }
-        annotations:
-          summary: "Pi 5 {{ $labels.instance }} is under-voltage now"
-          description: "Check the PSU/cable; the firmware is reporting active under-voltage."
-
-      # Under-voltage happened at some point since boot (sticky bit; clears only
-      # on power-cycle, never on reboot — no sysfs equivalent exists).
-      - alert: Pi5UnderVoltageSinceBoot
-        expr: pi5_throttle_state_since_boot{flag="under_voltage"} == 1
-        for: 5m
-        labels: { severity: warning }
-        annotations:
-          summary: "Pi 5 {{ $labels.instance }} saw under-voltage since power-on"
-          description: "A power dip occurred earlier; investigate even if currently stable."
-
-      - alert: Pi5HighSocTemperature
-        expr: pi5_soc_temperature_celsius > 80
-        for: 5m
-        labels: { severity: warning }
-        annotations:
-          summary: "Pi 5 {{ $labels.instance }} SoC at {{ $value | printf \"%.1f\" }}C"
-
-      # RTC backup cell is low (0 = charging disabled / no cell fitted, so guard > 0).
-      - alert: Pi5RtcCellLow
-        expr: pi5_rtc_battery_volts > 0 and pi5_rtc_battery_volts < 2.8
-        for: 15m
-        labels: { severity: warning }
-        annotations:
-          summary: "Pi 5 {{ $labels.instance }} RTC backup cell low ({{ $value | printf \"%.2f\" }}V)"
-
-      # A collector is failing — its data series have gone absent.
-      - alert: Pi5CollectorFailed
-        expr: pi5_scrape_collector_success == 0
-        for: 5m
-        labels: { severity: warning }
-        annotations:
-          summary: "pi5_exporter collector {{ $labels.collector }} failing on {{ $labels.instance }}"
-
-      # Cached metrics are stale — the internal collection loop is stuck.
-      - alert: Pi5MetricsStale
-        expr: pi5_exporter_metrics_age_seconds > 120
-        for: 5m
-        labels: { severity: warning }
-        annotations:
-          summary: "pi5_exporter metrics on {{ $labels.instance }} are {{ $value | printf \"%.0f\" }}s old"
-```
-
----
-
-## 7. Metric reference
+## 5. Metric reference
 
 Full details — including labels, units, and provenance — are in
 [`docs/metrics.md`](docs/metrics.md). Summary of the data metrics:
@@ -295,7 +206,7 @@ Full details — including labels, units, and provenance — are in
 | `pi5_soc_temperature_celsius` | gauge | — | SoC temperature (overlaps node_exporter). |
 | `pi5_pmic_temperature_celsius` | gauge | — | PMIC die temperature (not in node_exporter). |
 | `pi5_rtc_battery_volts` | gauge | — | RTC backup-cell voltage. |
-| `pi5_rtc_charging_volts` | gauge | — | RTC trickle-charge target (0 = disabled/no cell). |
+| `pi5_rtc_charging_volts` | gauge | — | RTC trickle-charge target (0 = charging not enabled; not a cell-presence indicator). |
 | `pi5_rtc_charging_volts_min` / `_max` | gauge | — | Configurable trickle-charge bounds. |
 | `pi5_board_info` | gauge (=1) | `model`,`soc`,`firmware_hash`,`firmware_variant`,`serial` | Board identity. |
 | `pi5_watchdog_bootstatus` / `pi5_watchdog_timeout_seconds` | gauge | — | Watchdog (collector off by default). |
@@ -320,14 +231,14 @@ Always-present meta-metrics:
 
 ---
 
-## 8. Troubleshooting
+## 6. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | All `pi5_*` firmware metrics absent; log warns `cannot open /dev/vcio` with `permission denied` (`EACCES`) | The exporter user is not in the `video` group. | `sudo usermod -aG video <user>` and restart the service. The systemd unit already sets `SupplementaryGroups=video`. |
 | Firmware collectors disabled; log warns `not a BCM2712 (Raspberry Pi 5) board` | Running on a Pi 4 or non-Pi hardware. | Expected — firmware collectors only work on BCM2712. sysfs collectors still run. |
 | Log warns `cannot open /dev/vcio` with `no such file` (`ENOENT`) | Not a Pi 5, or firmware too old to expose `/dev/vcio`. | Update the firmware / confirm the board. |
-| `pi5_rtc_*` metrics absent | No `/sys/class/rtc/rtc0` (or `pi5_scrape_collector_success{collector="rtc"}==0`). | The RTC collector is gated on that path; `pi5_rtc_charging_volts == 0` means trickle charging is disabled / no cell is fitted (not an error). |
+| `pi5_rtc_*` metrics absent | No `/sys/class/rtc/rtc0` (so `pi5_scrape_collector_success{collector="rtc"}==0`). | The RTC collector requires that sysfs path to exist. Note: `pi5_rtc_charging_volts == 0` is normal — it just means trickle charging isn't enabled, **not** that the backup cell is missing (check `pi5_rtc_battery_volts`). |
 | Metrics look frozen / `pi5_exporter_metrics_age_seconds` keeps climbing | Scrape interval shorter than collection interval, or a stuck collection loop. | Set `scrape_interval ≥ --collection.interval`; inspect logs. |
 
 ---

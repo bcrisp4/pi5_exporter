@@ -13,7 +13,8 @@ var (
 	rtcBatteryDesc = prometheus.NewDesc("pi5_rtc_battery_volts",
 		"RTC backup-cell (battery/supercap) voltage.", nil, nil)
 	rtcChargingDesc = prometheus.NewDesc("pi5_rtc_charging_volts",
-		"RTC backup-cell trickle-charge target voltage (0 = charging disabled / no cell fitted).", nil, nil)
+		"RTC backup-cell trickle-charge target voltage; 0 means trickle charging is not enabled "+
+			"(it does not indicate cell presence; see pi5_rtc_battery_volts).", nil, nil)
 	rtcChargingMinDesc = prometheus.NewDesc("pi5_rtc_charging_volts_min",
 		"Minimum configurable RTC trickle-charge voltage.", nil, nil)
 	rtcChargingMaxDesc = prometheus.NewDesc("pi5_rtc_charging_volts_max",

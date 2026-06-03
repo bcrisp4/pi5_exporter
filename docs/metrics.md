@@ -149,14 +149,15 @@ the three charging attributes are best-effort.
 | Metric | Type | Labels | Unit | Source | Default | Notes |
 |---|---|---|---|---|---|---|
 | `pi5_rtc_battery_volts` | gauge | (none) | volts | sysfs `/sys/class/rtc/rtc0/battery_voltage` | ON | RTC backup-cell (battery/supercap) voltage. Required; collector fails if missing. |
-| `pi5_rtc_charging_volts` | gauge | (none) | volts | sysfs `/sys/class/rtc/rtc0/charging_voltage` | ON | RTC backup-cell trickle-charge target voltage (0 = charging disabled / no cell fitted). |
+| `pi5_rtc_charging_volts` | gauge | (none) | volts | sysfs `/sys/class/rtc/rtc0/charging_voltage` | ON | RTC backup-cell trickle-charge target voltage; 0 means trickle charging is not enabled (it does not indicate cell presence). |
 | `pi5_rtc_charging_volts_min` | gauge | (none) | volts | sysfs `/sys/class/rtc/rtc0/charging_voltage_min` | ON | Minimum configurable RTC trickle-charge voltage. |
 | `pi5_rtc_charging_volts_max` | gauge | (none) | volts | sysfs `/sys/class/rtc/rtc0/charging_voltage_max` | ON | Maximum configurable RTC trickle-charge voltage. |
 
-**`pi5_rtc_charging_volts = 0` meaning:** a value of `0` means trickle-charging is
-**disabled / no backup cell is fitted** — it is the configured charge *target*
-voltage, not the measured cell voltage. Read `pi5_rtc_battery_volts` for the
-actual cell voltage.
+**`pi5_rtc_charging_volts = 0` meaning:** a value of `0` means the RTC's trickle
+charger is **not enabled**. It is the configured charge *target* voltage, not the
+measured cell voltage, and it says **nothing about whether a backup cell is
+fitted** — leaving charging at `0` is normal and correct for a non-rechargeable
+cell. Read `pi5_rtc_battery_volts` for the actual cell voltage.
 
 ---
 
@@ -168,7 +169,7 @@ firmware hash/variant come from `vcgencmd version`.
 
 | Metric | Type | Labels | Unit | Source | Default | Notes |
 |---|---|---|---|---|---|---|
-| `pi5_board_info` | gauge | `model`, `soc`, `firmware_hash`, `firmware_variant`, `serial` | info (value always 1) | device-tree (`/proc/device-tree/model`, `/proc/device-tree/serial-number`, `/proc/device-tree/compatible`) + gencmd `version` | ON | Board identity as labels; the value is always 1. `model`/`serial`/`soc` from device-tree; `firmware_hash`/`firmware_variant` from `vcgencmd version`. Any field that cannot be read is left empty. |
+| `pi5_board_info` | gauge | `model`, `soc`, `firmware_hash`, `firmware_variant`, `serial` | info (value always 1) | device-tree (`/proc/device-tree/model`, `/proc/device-tree/serial-number`, `/proc/device-tree/compatible`) + gencmd `version` | ON | Board identity as labels; the value is always 1. `model`/`serial`/`soc` from device-tree; `firmware_hash`/`firmware_variant` from `vcgencmd version`. `model` is required (the collector fails if it cannot be read); the other label fields are left empty if unavailable. |
 
 > Note: this collector is registered as a firmware collector, so it is skipped
 > when the mailbox is unavailable — even though the device-tree fields could be
