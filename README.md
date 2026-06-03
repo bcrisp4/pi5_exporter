@@ -111,11 +111,17 @@ podman pull ghcr.io/bcrisp4/pi5_exporter:latest
 podman pull ghcr.io/bcrisp4/pi5_exporter:0.1.0
 ```
 
-The container needs two things to reach the firmware: the **`/dev/vcio`** device
-**and** the host **`video`** group. The exporter runs as a non-root user (uid
-65532) inside the image, so it must be granted that group to open the device —
-the same `video`-group requirement as the native binary, just expressed as
-container run flags.
+Three run flags let the container reach the firmware:
+
+- **`--device /dev/vcio`** — the firmware mailbox device.
+- **`--group-add …`** — the host **`video`** group. The exporter runs as a
+  non-root user (uid 65532) inside the image, so it must be granted that group to
+  open `/dev/vcio` (the same `video`-group requirement as the native binary).
+- **`--security-opt unmask=/sys/firmware`** — exposes the device tree. podman and
+  docker mask `/sys/firmware` with an empty overlay by default, which makes
+  `/proc/device-tree` (a symlink into it) dangle. **Without this the firmware
+  metrics still work**, but the `board` collector can't read the model/serial, so
+  `pi5_board_info` is absent.
 
 **Run with podman** (rootless — the Raspberry Pi OS default). Run podman as a
 user who is in the `video` group; `--group-add keep-groups` then carries that
@@ -126,17 +132,21 @@ podman run -d --name pi5_exporter --restart=unless-stopped \
   -p 2712:2712 \
   --device /dev/vcio \
   --group-add keep-groups \
+  --security-opt unmask=/sys/firmware \
   ghcr.io/bcrisp4/pi5_exporter:latest
 ```
 
 **Run with docker** (or rootful podman). `keep-groups` is podman-rootless-only,
-so pass the host's numeric `video` GID explicitly:
+so pass the host's numeric `video` GID explicitly. docker has no per-path
+`unmask`, so use `systempaths=unconfined` to expose `/sys/firmware` (only needed
+for `pi5_board_info`):
 
 ```sh
 docker run -d --name pi5_exporter --restart=unless-stopped \
   -p 2712:2712 \
   --device /dev/vcio \
   --group-add "$(getent group video | cut -d: -f3)" \
+  --security-opt systempaths=unconfined \
   ghcr.io/bcrisp4/pi5_exporter:latest
 ```
 
@@ -147,9 +157,10 @@ Verify the container can reach the firmware:
 
 ```sh
 curl -s localhost:2712/metrics | grep pi5_scrape_collector_success
-# all values 1 = OK. If the firmware collectors are 0 or absent, the container
-# could not open /dev/vcio — check `podman logs pi5_exporter` for a warning
-# about the 'video' group (EACCES) or a missing device (ENOENT).
+# All 1 = OK. If most firmware collectors are 0/absent, the container can't open
+# /dev/vcio — check `podman logs pi5_exporter` for a 'video' group (EACCES) or
+# missing-device (ENOENT) warning. If only `board` is 0, the device tree is
+# masked — add --security-opt unmask=/sys/firmware.
 ```
 
 **Run as a managed service (podman Quadlet).** On podman 4.4+, the rootless setup
@@ -165,6 +176,7 @@ Image=ghcr.io/bcrisp4/pi5_exporter:latest
 PublishPort=2712:2712
 AddDevice=/dev/vcio
 GroupAdd=keep-groups
+Unmask=/sys/firmware
 
 [Service]
 Restart=always

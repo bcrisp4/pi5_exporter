@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -53,21 +54,24 @@ func main() {
 	logger.Info("starting pi5_exporter", "version", version.Info(), "build_context", version.BuildContext())
 
 	// --- Firmware availability gate ---------------------------------------
-	// The firmware (mailbox) collectors require a BCM2712 board and /dev/vcio.
-	// sysfs collectors (rtc, watchdog) work regardless.
+	// /dev/vcio is the authoritative signal; the device-tree compatible string is
+	// only a best-effort negative check (see resolveFirmware). sysfs collectors
+	// (rtc, watchdog) run regardless.
+	client, firmwareAvailable := resolveFirmware(
+		func() ([]byte, error) { return os.ReadFile("/proc/device-tree/compatible") },
+		func() (firmwareClient, error) {
+			c, err := mailbox.Open()
+			if err != nil {
+				return nil, err
+			}
+			return c, nil
+		},
+		logger,
+	)
 	var gc collector.GenCmder
-	firmwareAvailable := false
-	if compatible, err := os.ReadFile("/proc/device-tree/compatible"); err != nil {
-		logger.Warn("cannot read device-tree compatible; firmware collectors disabled", "err", err)
-	} else if fam := platform.DetectFamily(compatible); !fam.IsBCM2712 {
-		logger.Warn("not a BCM2712 (Raspberry Pi 5) board; firmware collectors disabled", "model", fam.Model)
-	} else if client, err := mailbox.Open(); err != nil {
-		logger.Warn("cannot open /dev/vcio; firmware collectors disabled", "err", err)
-	} else {
+	if firmwareAvailable {
 		gc = client
-		firmwareAvailable = true
-		defer client.Close()
-		logger.Info("firmware mailbox available", "soc", fam.SoC, "model", fam.Model)
+		defer func() { _ = client.Close() }()
 	}
 
 	deps := collector.Deps{GenCmd: gc, FS: os.ReadFile, Logger: logger}
@@ -131,4 +135,41 @@ func main() {
 		logger.Error("http server failed", "err", err)
 		os.Exit(1)
 	}
+}
+
+// firmwareClient is the firmware mailbox handle: a GenCmder that can be closed.
+// *mailbox.Client satisfies it.
+type firmwareClient interface {
+	collector.GenCmder
+	Close() error
+}
+
+// resolveFirmware decides whether the firmware (mailbox) collectors can run.
+//
+// The authoritative signal is whether /dev/vcio opens (openMailbox). The
+// device-tree "compatible" string (readCompatible) is only a best-effort EARLY
+// check: a board we can positively identify as non-BCM2712 (e.g. a Pi 4) is
+// disabled up front. Crucially an UNREADABLE device-tree — e.g. inside a
+// container where /proc/device-tree is not mounted — is treated as "unknown",
+// not "unavailable": we fall through and let /dev/vcio be the judge. That is why
+// the firmware metrics work in a container with only --device /dev/vcio and no
+// device-tree mount.
+func resolveFirmware(
+	readCompatible func() ([]byte, error),
+	openMailbox func() (firmwareClient, error),
+	logger *slog.Logger,
+) (firmwareClient, bool) {
+	if compatible, err := readCompatible(); err == nil {
+		if fam := platform.DetectFamily(compatible); !fam.IsBCM2712 {
+			logger.Warn("not a BCM2712 (Raspberry Pi 5) board; firmware collectors disabled", "model", fam.Model)
+			return nil, false
+		}
+	}
+	client, err := openMailbox()
+	if err != nil {
+		logger.Warn("cannot open /dev/vcio; firmware collectors disabled", "err", err)
+		return nil, false
+	}
+	logger.Info("firmware mailbox available")
+	return client, true
 }
