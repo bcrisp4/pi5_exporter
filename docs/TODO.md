@@ -21,8 +21,13 @@ Push a semver tag, e.g.:
 ```sh
 git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
 ```
-After the first image push, make the GHCR package **public** in its settings if
-you want unauthenticated `podman pull` (it defaults to private).
+**Making the image public (one-time, permanent).** GHCR packages are private by
+default, and there is no build-time flag or REST API to change that — visibility
+is a property of the package, toggled once via the UI. After the first image
+push, go to
+`https://github.com/users/bcrisp4/packages/container/pi5_exporter/settings`
+→ *Danger Zone* → *Change package visibility* → *Public*. It then stays public
+for every subsequent release (public cannot be reverted to private).
 
 ## Possible future work
 
